@@ -1,11 +1,9 @@
 # The People's Coin — Backend & System Controller
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
 [![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
 
-**License:** MIT  
 **Stack:** Python (Flask), PostgreSQL 15, SQLAlchemy, Docker  
 **Status:** Working backend · Structure stabilized · Live site currently non-functional
 
@@ -627,7 +625,6 @@ I would like to acknowledge **Microsoft Copilot**, and **OpenAI ChatGPT** for th
 The People's Coin backend is a Flask- and PostgreSQL-based system that securely records goodwill actions, manages user and governance data, and dynamically monitors system health. Its System Controller enables adaptive behavior inspired by biological systems, providing a transparent and scalable foundation for community-driven platforms.
 
 **Author:** Don Michael Feeney Jr  
-**License:** MIT (see [License](License) file)  
 **Repository:** [github.com/dfeen87/the-peoples-coin-project](https://github.com/dfeen87/the-peoples-coin-project)
 
 ---
