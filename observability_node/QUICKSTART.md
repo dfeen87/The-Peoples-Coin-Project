@@ -1,8 +1,8 @@
-# Global Observability Node - Quick Start Guide
+# Global Observability Node — Quick Start Guide
 
 ## Overview
 
-The Global Observability Node is a lightweight, read-only REST API that provides safe access to internal system state for monitoring and observability purposes.
+The Global Observability Node is a lightweight, read-only REST API that provides safe, non-intrusive access to internal system state for monitoring and observability purposes.
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ curl http://localhost:8080/health
 {
   "status": "ok",
   "service": "Global Observability Node",
-  "version": "1.0.0",
+  "version": "3.1.1",
   "uptime_seconds": 3600.5,
   "timestamp": "2026-02-14T12:00:00.000000+00:00"
 }
@@ -190,4 +190,4 @@ export OBSERVABILITY_PORT=8081
 
 ## Support
 
-For issues, questions, or contributions, please open an issue on GitHub.
+For issues, questions, or contributions, please refer to the project documentation or open an issue.
