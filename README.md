@@ -1,11 +1,12 @@
 # The People's Coin — Backend & System Controller
 
+[![Version 3.1.1](https://img.shields.io/badge/version-3.1.1-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
 [![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
 
 **Stack:** Python (Flask), PostgreSQL 15, SQLAlchemy, Docker  
-**Status:** Working backend · Structure stabilized · Live site currently non-functional
+**Status:** Working backend · Structure stabilized
 
 ---
 
@@ -40,8 +41,6 @@
 
 ## Disclaimer
 > ⚠️ **IMPORTANT NOTE:** NOT AFFILIATED WITH ANY CRYPTO COINS. This project does not mint coins that are sold.
-
-The live site is currently non-functional.
 
 Any keys, credentials, or configuration values present in this repository are illustrative only and must not be used for operational or production purposes.
 
@@ -123,12 +122,18 @@ Before you begin, ensure you have the following installed:
    venv\Scripts\activate
    ```
 
-3. **Install dependencies**
+3. **Install OS dependencies** (if not already installed)
+   ```bash
+   # On Ubuntu/Debian, needed for psycopg2
+   sudo apt-get update && sudo apt-get install -y libpq-dev
+   ```
+
+4. **Install Python dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-4. **Set up PostgreSQL database**
+5. **Set up PostgreSQL database**
    ```bash
    # Create a new database
    createdb peoples_coin
@@ -137,7 +142,7 @@ Before you begin, ensure you have the following installed:
    psql -U postgres -c "CREATE DATABASE peoples_coin;"
    ```
 
-5. **Initialize database migrations**
+6. **Initialize database migrations**
    ```bash
    flask db upgrade
    # Or using the manage script
@@ -602,9 +607,7 @@ For additional help, please [open an issue](https://github.com/dfeen87/the-peopl
 
 ## Supporting the Project
 
-This project is **MIT-licensed** because I want people to learn from it, build with it, and carry it forward.
-
-At the same time, this code reflects a lot of personal effort and care. If you find it useful, please consider supporting the work in one or more of these ways:
+This code reflects a lot of personal effort and care. If you find it useful for non-commercial purposes, please consider supporting the work in one or more of these ways:
 
 - ⭐ **Star and share** the repository so more builders can discover it
 - 📝 **Keep attribution** in place and reference this project in derivative work
