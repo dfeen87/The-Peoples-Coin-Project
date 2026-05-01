@@ -1,5 +1,6 @@
 # The People's Coin — Backend & System Controller
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Version 3.1.1](https://img.shields.io/badge/version-3.1.1-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
