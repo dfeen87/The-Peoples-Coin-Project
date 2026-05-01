@@ -607,7 +607,7 @@ For additional help, please [open an issue](https://github.com/dfeen87/the-peopl
 
 ## Supporting the Project
 
-This code reflects a lot of personal effort and care. If you find it useful for non-commercial purposes, please consider supporting the work in one or more of these ways:
+This code reflects a lot of personal effort and care. If you find it useful, please consider supporting the work in one or more of these ways:
 
 - ⭐ **Star and share** the repository so more builders can discover it
 - 📝 **Keep attribution** in place and reference this project in derivative work
@@ -640,8 +640,13 @@ Whether you're building a governance system, a reputation ledger, or exploring a
 
 ---
 
+
+## Enterprise Consulting & Integration
+This architecture is fully open-source under the MIT License. If your organization requires custom scaling, proprietary integration, or dedicated technical consulting to deploy these models at an enterprise level, please reach out at: dfeen87@gmail.com
+
+---
+
 ## License
 
-This project is available for **non‑commercial use only** under the terms of the included LICENSE file.  
-Commercial use requires a separate paid license.
+This project is 100% open-source under the **MIT License**. You may use, modify, and distribute it in accordance with the terms in the `LICENSE` file.
 
