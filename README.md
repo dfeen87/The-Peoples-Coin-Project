@@ -1,7 +1,7 @@
 # The People's Coin — Backend & System Controller
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version 3.1.1](https://img.shields.io/badge/version-3.1.1-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
+[![Version 4.0.0](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
 [![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
@@ -24,6 +24,7 @@
   - [Running the Application](#running-the-application)
 - [Architecture & Components](#architecture--components)
 - [API Documentation](#api-documentation)
+- [Peoples Coin Banking Security Plugin (Traditional Banking Mode)](#peoples-coin-banking-security-plugin-traditional-banking-mode)
 - [Global Observability Node](#global-observability-node)
 - [Kubernetes Integration](#kubernetes-integration)
 - [Monitoring & Logging](#monitoring--logging)
@@ -281,6 +282,74 @@ The backend follows a modular, fault-tolerant design:
 - System logs complement persistent audit records
 - Comprehensive audit trails for all user actions
 - Real-time monitoring through the Observability Node
+
+---
+
+## Peoples Coin Banking Security Plugin (Traditional Banking Mode)
+
+The Peoples Coin Banking Security Plugin provides traditional banking institutions and regulated financial platforms with an optional, enterprise-grade security layer. When activated, it turns on "FIPS mode"-style security controls for the Peoples Coin backend, enabling strict compliance, dual-signature verification, role-based access, and tamper-evident audit chains.
+
+### Overview
+This plugin adapts the backend capabilities of Peoples Coin for high-security traditional banking environments. It operates as a pluggable Flask blueprint and middleware layer, allowing banking institutions to use Peoples Coin as a secure compliance and governance appliance without frontend dependencies.
+
+### Activation
+The plugin is disabled by default to keep standard deployments lightweight. Activate it by setting the following environment variable:
+
+```bash
+ENABLE_BANKING_PLUGIN=true
+```
+
+When enabled, the application registers the `banking_plugin_blueprint` and attaches the banking security middleware:
+
+```python
+if os.getenv("ENABLE_BANKING_PLUGIN") == "true":
+    app.register_blueprint(banking_plugin_blueprint)
+    banking_security_middleware(app)
+```
+
+### Capabilities
+
+- **Enhanced Request Signing**: Dual-signature payload validation (client signature + server HMAC), replay-attack nonce enforcement, and canonical JSON normalization.
+- **Strict RBAC + MFA Tokens**: Role hierarchy (`customer`, `teller`, `auditor`, `admin`), hardware-bound MFA tokens, and session-bound ephemeral privileges.
+- **PCI-DSS Data Controls**: PAN/SSN masking, structured sanitization, zero-logging of sensitive fields, and encrypted in-memory buffers.
+- **Fraud-Threshold Hooks**: Velocity tracking, anomaly scoring, per-account rate limits, and automatic freeze-account triggers.
+- **Audit Log Integrity**: Append-only encrypted logs, Merkle-root integrity proofs, and tamper-evident snapshots.
+- **Regulated Event Tracing**: FINRA Rule 4511 / FDIC 360 style trace IDs, deterministic event lineage, and retention policies.
+
+### Compliance & Security Endpoints
+
+When active, the plugin exposes dedicated endpoints under `/banking`:
+
+- `POST /banking/verify-signature`: Validates dual signatures, timestamps, and replay nonces.
+- `GET  /banking/audit-proof`: Returns the current Merkle root and tamper-evident audit snapshot.
+- `POST /banking/fraud-score`: Calculates velocity limits and anomaly risk scores for account actions.
+- `GET|POST /banking/rbac/roles`: Inspects role hierarchies and registers ephemeral MFA-bound sessions.
+
+### Architecture
+
+```
+peoples_coin/banking_plugin/
+├── __init__.py        # Module exports
+├── middleware.py      # Pre-request signature & nonce validation middleware
+├── rbac.py            # Role-Based Access Control & hardware MFA session binding
+├── audit.py           # Merkle-tree append-only tamper-evident audit ledger
+├── pci.py             # PCI-DSS data masking, zero-logging & encrypted memory buffers
+├── fraud.py           # Velocity checks, anomaly scoring & freeze-account triggers
+├── tracing.py         # FINRA/FDIC event trace IDs & lineage tracking
+└── routes.py          # Dedicated compliance endpoints (/banking/*)
+```
+
+### Use Cases
+- **Traditional Banking**: Secure goodwill/community token integrations into core banking ledger systems.
+- **FinTech Compliance**: Regulated financial platforms requiring strict PCI-DSS masking, dual signing, and Merkle audit verification.
+- **Regulated Auditing**: Independent audit verification using tamper-evident cryptographic snapshots.
+
+### Version 4.0.0 Release Notes
+Version 4.0.0 represents a major architectural milestone introducing:
+- Traditional Banking Security Plugin (`peoples_coin/banking_plugin`).
+- Cryptographic Merkle-root audit proof engine.
+- Dual HMAC payload signing and replay attack mitigation.
+- Regulated FINRA/FDIC event trace lineage.
 
 ---
 
