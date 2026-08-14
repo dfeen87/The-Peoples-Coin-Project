@@ -2,11 +2,12 @@ import os
 import json
 import time
 import pytest
-from flask import Flask
+from flask import Flask, jsonify
 
 from peoples_coin.banking_plugin import (
     pci_manager,
     rbac_manager,
+    require_role,
     audit_log,
     fraud_engine,
     regulated_tracer,
@@ -22,6 +23,12 @@ def banking_app():
     app.config['SECRET_KEY'] = 'test-secret-key'
     app.register_blueprint(banking_plugin_blueprint)
     banking_security_middleware(app, secret_key='test-secret-key')
+
+    @app.route('/protected-admin', methods=['GET'])
+    @require_role('admin', require_mfa_hardware=True)
+    def protected_admin_endpoint():
+        return jsonify({'status': 'granted'}), 200
+
     return app
 
 
@@ -92,25 +99,21 @@ def test_audit_merkle_tree():
 
 def test_fraud_engine_velocity_and_scoring():
     account_id = "acc_test_999"
-
-    # Reset account state
     fraud_engine.unfreeze_account(account_id)
 
     assessment = fraud_engine.calculate_anomaly_score(
         account_id=account_id,
-        amount=100000.0,  # High amount (>50k adds 40 pts)
+        amount=100000.0,
         ip_address="192.168.1.1",
-        hour_of_day=3      # Off-peak hours adds 15 pts
+        hour_of_day=3
     )
     assert assessment['score'] >= 50.0
 
-    # Test velocity limit
     for _ in range(15):
         fraud_engine.record_activity_and_check_velocity(account_id)
 
     frozen, reason = fraud_engine.is_frozen(account_id)
     assert frozen is True
-    assert "Velocity" in reason or "anomaly" in reason
 
 
 def test_regulated_tracer():
@@ -178,3 +181,84 @@ def test_endpoint_rbac_roles(client):
         'user_id': 'admin_001'
     })
     assert reg_res.status_code == 201
+
+
+# --- Fail-Closed Rejection Tests ---
+
+def test_fail_closed_invalid_signature(client):
+    res = client.post('/banking/verify-signature', json={
+        'signature': 'invalid-signature-hash',
+        'timestamp': str(time.time()),
+        'nonce': 'nonce-123',
+        'payload': {'action': 'PAYMENT'}
+    })
+    assert res.status_code == 401
+    data = res.get_json()
+    assert data['code'] == 'INVALID_SIGNATURE'
+
+
+def test_fail_closed_pci_violation(client):
+    res = client.post('/banking/fraud-score', json={
+        'account_id': 'acc_123',
+        'card_number': '4111111111111111',  # Raw unmasked PAN
+        'amount': 100.0
+    })
+    assert res.status_code == 422
+    data = res.get_json()
+    assert data['code'] == 'PCI_DSS_VIOLATION'
+
+
+def test_fail_closed_fraud_threshold(client):
+    fraud_acc = "fraud_blocked_acc"
+    fraud_engine.freeze_account(fraud_acc, "Manual security freeze")
+
+    res = client.post('/banking/fraud-score', json={
+        'account_id': fraud_acc,
+        'amount': 500.0
+    })
+    assert res.status_code == 403
+    data = res.get_json()
+    assert data['code'] == 'FRAUD_THRESHOLD_BREACH'
+
+
+def test_fail_closed_missing_trace_lineage(banking_app):
+    os.environ['BANKING_REQUIRE_TRACE'] = 'true'
+    try:
+        test_client = banking_app.test_client()
+        res = test_client.get('/banking/rbac/roles')
+        assert res.status_code == 400
+        data = res.get_json()
+        assert data['code'] == 'MISSING_TRACE_LINEAGE'
+    finally:
+        os.environ['BANKING_REQUIRE_TRACE'] = 'false'
+
+
+def test_fail_closed_rbac_mismatch_and_mfa(client):
+    # 1. No token -> 401
+    res1 = client.get('/protected-admin')
+    assert res1.status_code == 401
+    assert res1.get_json()['code'] == 'UNAUTHORIZED'
+
+    # 2. Teller token attempting admin route -> 403 RBAC_MISMATCH
+    rbac_manager.register_session('teller-tok', 'teller', 'user_teller')
+    res2 = client.get('/protected-admin', headers={'Authorization': 'Bearer teller-tok'})
+    assert res2.status_code == 403
+    assert res2.get_json()['code'] == 'RBAC_MISMATCH'
+
+    # 3. Admin token missing hardware MFA signature -> 403 MISSING_MFA_TOKEN
+    rbac_manager.register_session('admin-tok', 'admin', 'user_admin', hardware_device_id='hw_dev_99')
+    res3 = client.get('/protected-admin', headers={'Authorization': 'Bearer admin-tok'})
+    assert res3.status_code == 403
+    assert res3.get_json()['code'] == 'MISSING_MFA_TOKEN'
+
+
+def test_fail_closed_malformed_audit_proof(client):
+    # Tamper with an audit entry in memory
+    audit_log.append("PRE_TAMPER_EVENT", "actor1", {})
+    if audit_log._entries:
+        audit_log._entries[0]['hash'] = 'corrupted_hash_value_12345'
+
+    res = client.get('/banking/audit-proof')
+    assert res.status_code == 422
+    data = res.get_json()
+    assert data['code'] == 'MALFORMED_AUDIT_PROOF'

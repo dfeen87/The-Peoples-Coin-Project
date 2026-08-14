@@ -307,14 +307,19 @@ if os.getenv("ENABLE_BANKING_PLUGIN") == "true":
     banking_security_middleware(app)
 ```
 
-### Capabilities
+### Capabilities & Strict Fail-Closed Enforcement
 
-- **Enhanced Request Signing**: Dual-signature payload validation (client signature + server HMAC), replay-attack nonce enforcement, and canonical JSON normalization.
-- **Strict RBAC + MFA Tokens**: Role hierarchy (`customer`, `teller`, `auditor`, `admin`), hardware-bound MFA tokens, and session-bound ephemeral privileges.
-- **PCI-DSS Data Controls**: PAN/SSN masking, structured sanitization, zero-logging of sensitive fields, and encrypted in-memory buffers.
-- **Fraud-Threshold Hooks**: Velocity tracking, anomaly scoring, per-account rate limits, and automatic freeze-account triggers.
-- **Audit Log Integrity**: Append-only encrypted logs, Merkle-root integrity proofs, and tamper-evident snapshots.
-- **Regulated Event Tracing**: FINRA Rule 4511 / FDIC 360 style trace IDs, deterministic event lineage, and retention policies.
+The plugin adopts strict **fail-closed** mode across all operations:
+
+- **Invalid Signature / Replay Nonce** -> Request immediately rejected (`401 INVALID_SIGNATURE`)
+- **RBAC Role Mismatch** -> Request immediately rejected (`403 RBAC_MISMATCH`)
+- **Missing Hardware MFA Token** -> Request immediately rejected (`403 MISSING_MFA_TOKEN`)
+- **PCI-DSS Data Violation** -> Request immediately rejected (`422 PCI_DSS_VIOLATION`)
+- **Fraud-Threshold Breach / Freeze** -> Request immediately rejected (`403 FRAUD_THRESHOLD_BREACH`)
+- **Malformed / Tampered Audit Proof** -> Request immediately rejected (`422 MALFORMED_AUDIT_PROOF`)
+- **Missing Regulated Trace Lineage** -> Request immediately rejected (`400 MISSING_TRACE_LINEAGE`)
+
+This ensures Peoples Coin behaves like a regulated banking security appliance rather than a permissive blockchain API.
 
 ### Compliance & Security Endpoints
 

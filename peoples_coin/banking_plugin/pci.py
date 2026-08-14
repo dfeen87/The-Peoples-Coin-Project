@@ -1,17 +1,14 @@
 """
 PCI-DSS Data Controls for Traditional Banking Security Plugin.
 Provides PAN masking, structured sanitization, sensitive field zero-logging,
-and encrypted memory buffers.
+encrypted memory buffers, and PCI compliance validation.
 """
 
 import re
 import copy
-import base64
-import os
-from typing import Any, Dict, Union
+from typing import Any, Dict, Tuple
 from cryptography.fernet import Fernet
 
-# Regex patterns for PAN (Primary Account Numbers) and SSN
 PAN_PATTERN = re.compile(r'\b(?:\d[ -]*?){13,19}\b')
 SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
 
@@ -26,7 +23,6 @@ class PCIDataManager:
 
     def __init__(self, encryption_key: bytes = None):
         if not encryption_key:
-            # Generate or load a Fernet key
             encryption_key = Fernet.generate_key()
         self.fernet = Fernet(encryption_key)
 
@@ -45,6 +41,31 @@ class PCIDataManager:
         if len(digits) == 9:
             return f"***-**-{digits[-4:]}"
         return "***-**-****"
+
+    def validate_pci_compliance(self, data: Any) -> Tuple[bool, str]:
+        """
+        Fail-closed check to detect unmasked raw PAN or SSN in input data.
+        Returns (True, '') if compliant, or (False, 'violation reason') if unmasked PAN/SSN is detected.
+        """
+        if isinstance(data, dict):
+            for k, v in data.items():
+                if str(k).lower() in {'card_number', 'pan', 'cvv', 'cvc'}:
+                    if isinstance(v, str) and not v.startswith('*') and len(re.sub(r'\D', '', v)) >= 13:
+                        return False, f"Unmasked card number/PAN in field '{k}'"
+                    if str(k).lower() in {'cvv', 'cvc'} and v:
+                        return False, f"Forbidden storage of CVV/CVC in field '{k}'"
+                valid, reason = self.validate_pci_compliance(v)
+                if not valid:
+                    return False, reason
+        elif isinstance(data, list):
+            for item in data:
+                valid, reason = self.validate_pci_compliance(item)
+                if not valid:
+                    return False, reason
+        elif isinstance(data, str):
+            if PAN_PATTERN.search(data) and not '*' in data:
+                return False, "Unmasked Primary Account Number (PAN) detected in string payload"
+        return True, ""
 
     def sanitize_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively masks sensitive values in a dictionary."""
@@ -69,7 +90,6 @@ class PCIDataManager:
                     for item in value
                 ]
             elif isinstance(value, str):
-                # Pattern match inline PAN or SSN inside general text string
                 if PAN_PATTERN.search(value):
                     cleaned[key] = PAN_PATTERN.sub(lambda m: self.mask_pan(m.group(0)), value)
                 if SSN_PATTERN.search(value):

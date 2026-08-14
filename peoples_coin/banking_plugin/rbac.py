@@ -1,13 +1,14 @@
 """
 Role-Based Access Control (RBAC) and Hardware-Bound MFA for Banking Security Plugin.
 Supported Roles: customer, teller, auditor, admin.
+Strict fail-closed enforcement on role mismatch or missing MFA hardware signatures.
 """
 
 from functools import wraps
 import time
 import hmac
 import hashlib
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 from flask import request, jsonify, g
 
 ROLE_HIERARCHY = {
@@ -17,7 +18,6 @@ ROLE_HIERARCHY = {
     'customer': {'customer'}
 }
 
-# In-memory session ephemeral privileges store (token -> {role, hw_bound, expires_at, permissions})
 _EPHEMERAL_SESSIONS: Dict[str, dict] = {}
 
 
@@ -64,12 +64,8 @@ class RBACManager:
 
     @staticmethod
     def verify_hardware_binding(session: dict, hardware_signature: Optional[str], payload: str) -> bool:
-        """
-        Validates hardware-bound MFA device signature matching session hardware device ID.
-        """
         hw_id = session.get('hardware_device_id')
         if not hw_id:
-            # Not hardware-bound
             return True
 
         if not hardware_signature:
@@ -83,7 +79,7 @@ rbac_manager = RBACManager()
 
 
 def require_role(required_role: str, require_mfa_hardware: bool = False):
-    """Decorator to enforce RBAC and optional hardware-bound MFA token check."""
+    """Decorator to enforce strict fail-closed RBAC and MFA hardware token checks."""
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
@@ -91,21 +87,33 @@ def require_role(required_role: str, require_mfa_hardware: bool = False):
             token = auth_header.replace('Bearer ', '').strip() if auth_header.startswith('Bearer ') else ''
 
             if not token:
-                return jsonify({'error': 'Missing authentication token', 'code': 'UNAUTHORIZED'}), 401
+                return jsonify({
+                    'error': 'Strict fail-closed: missing authentication token',
+                    'code': 'UNAUTHORIZED'
+                }), 401
 
             session = rbac_manager.get_session(token)
             if not session:
-                return jsonify({'error': 'Invalid or expired session token', 'code': 'UNAUTHORIZED'}), 401
+                return jsonify({
+                    'error': 'Strict fail-closed: invalid or expired session token',
+                    'code': 'UNAUTHORIZED'
+                }), 401
 
-            user_permissions = session.get('permissions', set())
+            user_permissions = session.get('permissions', [])
             if required_role not in user_permissions:
-                return jsonify({'error': f'Role {required_role} required', 'code': 'FORBIDDEN'}), 403
+                return jsonify({
+                    'error': f'Strict fail-closed: role mismatch ({required_role} required)',
+                    'code': 'RBAC_MISMATCH'
+                }), 403
 
             if require_mfa_hardware:
                 hw_sig = request.headers.get('X-Hardware-MFA-Signature')
                 payload = request.get_data(as_text=True) or request.path
-                if not rbac_manager.verify_hardware_binding(session, hw_sig, payload):
-                    return jsonify({'error': 'Hardware-bound MFA validation failed', 'code': 'MFA_REQUIRED'}), 403
+                if not hw_sig or not rbac_manager.verify_hardware_binding(session, hw_sig, payload):
+                    return jsonify({
+                        'error': 'Strict fail-closed: missing or invalid hardware-bound MFA token signature',
+                        'code': 'MISSING_MFA_TOKEN'
+                    }), 403
 
             g.banking_user = session
             return f(*args, **kwargs)

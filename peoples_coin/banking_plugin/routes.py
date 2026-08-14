@@ -5,6 +5,7 @@ Routes:
 - /banking/audit-proof
 - /banking/fraud-score
 - /banking/rbac/roles
+All routes adopt strict fail-closed mode.
 """
 
 from flask import Blueprint, request, jsonify, g, current_app
@@ -20,7 +21,7 @@ banking_plugin_blueprint = Blueprint('banking_plugin', __name__, url_prefix='/ba
 
 @banking_plugin_blueprint.route('/verify-signature', methods=['POST'])
 def verify_signature():
-    """Verify dual signature and HMAC payload for banking compliance."""
+    """Verify dual signature and HMAC payload with strict fail-closed rejection."""
     data = request.get_json(silent=True) or {}
     signature = request.headers.get('X-Banking-Signature') or data.get('signature')
     timestamp = request.headers.get('X-Banking-Timestamp') or data.get('timestamp')
@@ -37,7 +38,7 @@ def verify_signature():
         body=payload
     )
 
-    trace_id = getattr(g, 'banking_trace_id', None) or regulated_tracer.generate_trace_id()
+    trace_id = getattr(g, 'banking_trace_id', None) or request.headers.get('X-FINRA-Trace-ID') or regulated_tracer.generate_trace_id()
     audit_log.append(
         event_type="SIGNATURE_VERIFICATION",
         actor=data.get('actor_id', 'anonymous'),
@@ -46,7 +47,11 @@ def verify_signature():
     )
 
     if not valid:
-        return jsonify({'valid': False, 'error': 'Invalid signature, expired timestamp, or replayed nonce'}), 400
+        return jsonify({
+            'valid': False,
+            'code': 'INVALID_SIGNATURE',
+            'error': 'Strict fail-closed: invalid signature, expired timestamp, or replayed nonce'
+        }), 401
 
     return jsonify({
         'valid': True,
@@ -57,11 +62,19 @@ def verify_signature():
 
 @banking_plugin_blueprint.route('/audit-proof', methods=['GET'])
 def audit_proof():
-    """Retrieve current Merkle root and tamper-evident audit log snapshot."""
+    """Retrieve Merkle root and tamper-evident snapshot with fail-closed integrity assertion."""
     snapshot = audit_log.get_snapshot()
     integrity_valid = audit_log.verify_integrity()
+
+    if not integrity_valid:
+        return jsonify({
+            'integrity_verified': False,
+            'code': 'MALFORMED_AUDIT_PROOF',
+            'error': 'Strict fail-closed: audit log hash chain tamper or corruption detected'
+        }), 422
+
     return jsonify({
-        'integrity_verified': integrity_valid,
+        'integrity_verified': True,
         'snapshot': snapshot,
         'recent_entries_count': snapshot['total_records']
     }), 200
@@ -69,7 +82,7 @@ def audit_proof():
 
 @banking_plugin_blueprint.route('/fraud-score', methods=['POST'])
 def calculate_fraud_score():
-    """Calculate anomaly score, velocity check, and fraud risk for an account action."""
+    """Calculate anomaly score & velocity check with fail-closed rejection on threshold breach."""
     data = request.get_json(silent=True) or {}
     account_id = data.get('account_id')
     amount = float(data.get('amount', 0.0))
@@ -77,7 +90,10 @@ def calculate_fraud_score():
     hour_of_day = int(data.get('hour_of_day', 12))
 
     if not account_id:
-        return jsonify({'error': 'account_id is required'}), 400
+        return jsonify({
+            'error': 'Strict fail-closed: account_id is required',
+            'code': 'MISSING_ACCOUNT_ID'
+        }), 400
 
     velocity_ok = fraud_engine.record_activity_and_check_velocity(account_id)
     assessment = fraud_engine.calculate_anomaly_score(
@@ -87,13 +103,23 @@ def calculate_fraud_score():
         hour_of_day=hour_of_day
     )
 
-    trace_id = getattr(g, 'banking_trace_id', None) or regulated_tracer.generate_trace_id()
+    trace_id = getattr(g, 'banking_trace_id', None) or request.headers.get('X-FINRA-Trace-ID') or regulated_tracer.generate_trace_id()
     audit_log.append(
         event_type="FRAUD_ASSESSMENT",
         actor=account_id,
         context=pci_manager.zero_log_dict(assessment),
         trace_id=trace_id
     )
+
+    # Fail-closed check: reject if velocity exceeded or anomaly score threshold breached
+    if not velocity_ok or assessment.get('recommendation') == 'BLOCK_AND_FREEZE':
+        return jsonify({
+            'velocity_ok': velocity_ok,
+            'assessment': assessment,
+            'trace_id': trace_id,
+            'code': 'FRAUD_THRESHOLD_BREACH',
+            'error': 'Strict fail-closed: fraud threshold breach or account freeze active'
+        }), 403
 
     return jsonify({
         'velocity_ok': velocity_ok,
@@ -123,7 +149,10 @@ def manage_roles():
     hw_id = data.get('hardware_device_id')
 
     if not token or not role or not user_id:
-        return jsonify({'error': 'token, role, and user_id are required'}), 400
+        return jsonify({
+            'error': 'Strict fail-closed: token, role, and user_id are required',
+            'code': 'INVALID_RBAC_REQUEST'
+        }), 400
 
     try:
         session = rbac_manager.register_session(token, role, user_id, hardware_device_id=hw_id)
@@ -132,4 +161,7 @@ def manage_roles():
             'session': session
         }), 201
     except ValueError as e:
-        return jsonify({'error': str(e)}), 400
+        return jsonify({
+            'error': f'Strict fail-closed: {str(e)}',
+            'code': 'RBAC_MISMATCH'
+        }), 400
