@@ -3,6 +3,7 @@
 This module imports all blueprint instances from the route modules
 and provides a function to register them on the Flask app.
 """
+import os
 import logging
 from flask import Flask
 
@@ -40,5 +41,13 @@ def register_routes(app: Flask):
     app.register_blueprint(nervous_bp)
     app.register_blueprint(reproductive_bp)
     app.register_blueprint(status_bp)
+
+    # Conditionally register traditional banking plugin blueprint and middleware
+    enable_banking = os.getenv("ENABLE_BANKING_PLUGIN", "").lower() in ("true", "1", "yes")
+    if enable_banking:
+        from peoples_coin.banking_plugin import banking_plugin_blueprint, banking_security_middleware
+        app.register_blueprint(banking_plugin_blueprint)
+        banking_security_middleware(app)
+        logger.info("🔒 Traditional Banking Security Plugin registered and active.")
 
     logger.info("✅ All application blueprints registered.")

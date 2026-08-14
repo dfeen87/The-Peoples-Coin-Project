@@ -18,9 +18,12 @@ def app():
     test_app.config['TESTING'] = True
     
     with test_app.app_context():
-        from observability_node.app import db
-        # Create all tables
-        db.create_all()
+        from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
+        SQLiteTypeCompiler.visit_JSONB = lambda self, type_, **kw: "JSON"
+        import peoples_coin.models
+        from peoples_coin.extensions import db as main_db
+        from observability_node.app import db as obs_db
+        main_db.metadata.create_all(bind=obs_db.engine)
     
     yield test_app
 
