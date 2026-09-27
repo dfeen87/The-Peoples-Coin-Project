@@ -2,11 +2,10 @@
 
 import http
 import logging
+from datetime import datetime, timezone
 from functools import wraps
 from flask import request, jsonify, g
 from firebase_admin import auth as firebase_auth
-from sqlalchemy import func
-
 from peoples_coin.extensions import db
 from peoples_coin.models import ApiKey
 
@@ -31,10 +30,11 @@ def require_firebase_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        scheme, separator, id_token = (auth_header or "").partition(" ")
+        if scheme.lower() != "bearer" or not separator or not id_token.strip():
             return jsonify({KEY_ERROR: "Missing or invalid Authorization header"}), http.HTTPStatus.UNAUTHORIZED
 
-        id_token = auth_header.split("Bearer ")[1]
+        id_token = id_token.strip()
 
         try:
             decoded_token = firebase_auth.verify_id_token(id_token)
@@ -80,8 +80,11 @@ def require_api_key(f):
                 return jsonify({KEY_ERROR: "Invalid API key"}), http.HTTPStatus.FORBIDDEN
 
             # Check expiration
-            if key_obj.expires_at and key_obj.expires_at < func.now():
-                return jsonify({KEY_ERROR: "API key expired"}), http.HTTPStatus.FORBIDDEN
+            if key_obj.expires_at:
+                expires_at = key_obj.expires_at
+                now = datetime.now(timezone.utc if expires_at.tzinfo else None)
+                if expires_at < now:
+                    return jsonify({KEY_ERROR: "API key expired"}), http.HTTPStatus.FORBIDDEN
 
             # Attach the API key's user to g.api_user for downstream use
             g.api_user = key_obj.user
@@ -92,4 +95,3 @@ def require_api_key(f):
 
         return f(*args, **kwargs)
     return decorated
-

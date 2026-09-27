@@ -3,7 +3,7 @@ import logging
 from typing import List, Union, Dict, Any, Callable, Type
 from pydantic import BaseModel, ValidationError, Field, field_validator, Extra
 from functools import wraps
-from flask import request, jsonify
+from flask import g, request, jsonify
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,8 @@ class ValidationResult(BaseModel):
 class BatchValidationResult(BaseModel):
     """A self-describing result for a batch validation attempt."""
     all_valid: bool
-    valid_items: List[Contribution] = []
-    invalid_items: List[Dict] = []  # Holds original data plus error details
+    valid_items: List[Contribution] = Field(default_factory=list)
+    invalid_items: List[Dict] = Field(default_factory=list)  # Holds original data plus error details
 
 
 # ==============================================================================
@@ -131,6 +131,7 @@ def validate_with(schema: Type[BaseModel]) -> Callable:
                 json_data = request.get_json(force=True)
                 validated = schema.model_validate(json_data)
                 request.validated_data = validated
+                g.validated_data = validated
             except ValidationError as e:
                 logger.warning(f"Request validation error: {e.errors()}")
                 return jsonify({"errors": e.errors()}), 400
@@ -141,4 +142,3 @@ def validate_with(schema: Type[BaseModel]) -> Callable:
             return f(*args, **kwargs)
         return wrapped
     return decorator
-

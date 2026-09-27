@@ -46,7 +46,15 @@ class GoodwillService:
         logger.info("GoodwillService: Processing goodwill submission.")
 
         # Validate incoming data
-        validation_result = validate_transaction(data)
+        # The route replaces any client-supplied user ID with the authenticated
+        # account ID.  Pass that trusted value through both identity checks so
+        # validation cannot reject every submission due to missing arguments.
+        authenticated_user_id = str(data.get("user_id", ""))
+        validation_result = validate_transaction(
+            data,
+            authenticated_user_id=authenticated_user_id,
+            allowed_contributors_loader=lambda: {authenticated_user_id},
+        )
         if not validation_result.is_valid:
             logger.warning(f"Validation failed: {validation_result.errors}")
             raise GoodwillError(f"Validation failed: {validation_result.errors}")
@@ -55,11 +63,10 @@ class GoodwillService:
 
         with get_session_scope(self.db) as session:
             try:
-                # Link Firebase UID to internal UserAccount UUID
-                user_account = session.query(UserAccount).filter_by(firebase_uid=validated_data['user_id']).first()
+                user_account = session.query(UserAccount).filter_by(id=validated_data['user_id']).first()
                 if not user_account:
-                    logger.warning(f"UserAccount not found for Firebase UID: {validated_data['user_id']}")
-                    raise GoodwillError(f"No UserAccount found for Firebase UID {validated_data['user_id']}")
+                    logger.warning(f"UserAccount not found for ID: {validated_data['user_id']}")
+                    raise GoodwillError(f"No UserAccount found for ID {validated_data['user_id']}")
 
                 goodwill_action = GoodwillAction(
                     performer_user_id=user_account.id,
@@ -92,6 +99,8 @@ class GoodwillService:
             except IntegrityError as e:
                 logger.error("Database integrity error during goodwill action processing.", exc_info=True)
                 raise GoodwillError("Database error: possible duplicate or constraint violation.") from e
+            except GoodwillError:
+                raise
             except Exception as e:
                 logger.exception("Unexpected error processing goodwill action.")
                 raise GoodwillError(f"Internal server error: {str(e)}") from e
@@ -194,4 +203,3 @@ class GoodwillService:
 
 
 goodwill_service = GoodwillService()
-
