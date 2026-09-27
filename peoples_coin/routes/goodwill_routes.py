@@ -128,6 +128,8 @@ def goodwill_history():
     try:
         page = request.args.get('page', default=1, type=int)
         per_page = request.args.get('per_page', default=20, type=int)
+        if page is None or per_page is None or page < 1 or per_page < 1:
+            raise ValueError("page and per_page must be positive integers")
         per_page = min(per_page, 100)  # Limit max per page to 100
 
         paginated_result = goodwill_service.get_user_history(str(user_id), page=page, per_page=per_page)  # Convert UUID to string
@@ -141,4 +143,3 @@ def goodwill_history():
     except Exception as err:
         logger.exception(f"Failed to retrieve goodwill history for user_id={user_id}: {err}")
         return jsonify({"error": "Internal server error occurred"}), http.HTTPStatus.INTERNAL_SERVER_ERROR
-
