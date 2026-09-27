@@ -51,7 +51,7 @@ curl http://localhost:8080/health
 {
   "status": "ok",
   "service": "Global Observability Node",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "uptime_seconds": 3600.5,
   "timestamp": "2026-02-14T12:00:00.000000+00:00"
 }

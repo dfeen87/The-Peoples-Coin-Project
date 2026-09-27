@@ -1,7 +1,7 @@
 # The People's Coin — Backend & System Controller
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version 4.0.0](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
+[![Version 4.1.0](https://img.shields.io/badge/version-4.1.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
 [![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
@@ -349,8 +349,8 @@ peoples_coin/banking_plugin/
 - **FinTech Compliance**: Regulated financial platforms requiring strict PCI-DSS masking, dual signing, and Merkle audit verification.
 - **Regulated Auditing**: Independent audit verification using tamper-evident cryptographic snapshots.
 
-### Version 4.0.0 Release Notes
-Version 4.0.0 represents a major architectural milestone introducing:
+### Version 4.1.0 Release Notes
+Version 4.1.0 represents a major architectural milestone introducing:
 - Traditional Banking Security Plugin (`peoples_coin/banking_plugin`).
 - Cryptographic Merkle-root audit proof engine.
 - Dual HMAC payload signing and replay attack mitigation.

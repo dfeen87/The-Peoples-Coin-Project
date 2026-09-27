@@ -6,4 +6,4 @@ internal system state snapshots without affecting system behavior.
 
 All endpoints are GET-only and safe for querying.
 """
-__version__ = "4.0.0"
+__version__ = "4.1.0"
