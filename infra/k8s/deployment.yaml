@@ -32,7 +32,10 @@ spec:
               name: peoples-coin-secrets
               key: REDIS_URL
         - name: RABBITMQ_URL
-          value: amqp://guest:guest@35.199.15.190:5672/
+          valueFrom:
+            secretKeyRef:
+              name: peoples-coin-secrets
+              key: RABBITMQ_URL
         resources:
           requests:
             cpu: "100m"
@@ -66,4 +69,3 @@ spec:
     port: 80
     targetPort: 8080
   type: LoadBalancer
-

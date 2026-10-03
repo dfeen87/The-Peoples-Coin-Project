@@ -28,7 +28,9 @@ steps:
     - '--platform=managed'
     - '--allow-unauthenticated'
     - '--add-cloudsql-instances=heroic-tide-428421-q7:us-central1:peoples-coin-cluster-final'
-    - '--set-env-vars=DATABASE_URL=postgresql+pg8000://postgres:NDfcIdlRk0@/brightacts?unix_socket=/cloudsql/heroic-tide-428421-q7:us-central1:peoples-coin-cluster-final'
+    # Runtime DB_USER, DB_PASS, DB_NAME, and INSTANCE_CONNECTION_NAME settings
+    # are managed on the Cloud Run service (prefer Secret Manager bindings).
+    # Never place database credentials in source-controlled build arguments.
 
 images:
 - 'gcr.io/heroic-tide-428421-q7/peoples-coin-service:$COMMIT_SHA'
