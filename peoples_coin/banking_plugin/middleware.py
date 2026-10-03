@@ -9,13 +9,13 @@ import hmac
 import hashlib
 import json
 import math
-import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Optional
 from flask import request, jsonify, g
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from .store import security_store, SecurityStoreUnavailable
 
-_NONCE_CACHE: Dict[str, float] = {}
-_NONCE_CACHE_LOCK = threading.RLock()
 
 class RequestSigner:
     """Handles dual-signature payload validation and canonical JSON normalization."""
@@ -60,23 +60,25 @@ class RequestSigner:
         if not hmac.compare_digest(expected_sig, client_signature):
             return False
 
-        # Checking and reserving a nonce must be one atomic operation. Without
-        # the lock, simultaneous requests could both pass the replay check.
-        with _NONCE_CACHE_LOCK:
-            clean_expired_nonces(now=now)
-            if nonce in _NONCE_CACHE:
-                return False
-            _NONCE_CACHE[nonce] = now + max_skew_seconds
+        # A unique key is the cross-worker compare-and-set. Expired rows are
+        # removed in the same write transaction before reservation.
+        try:
+            with security_store.transaction(immediate=True) as conn:
+                conn.execute(text("DELETE FROM banking_nonces WHERE expires_at <= :now"), {"now": now})
+                conn.execute(text("INSERT INTO banking_nonces(nonce, expires_at, created_at) VALUES (:n,:e,:c)"),
+                             {"n": nonce, "e": now + max_skew_seconds, "c": now})
             return True
+        except IntegrityError:
+            return False
+        except SecurityStoreUnavailable:
+            return False
 
 
 def clean_expired_nonces(now: Optional[float] = None):
     """Remove expired nonces without racing verification requests."""
     now = time.time() if now is None else now
-    with _NONCE_CACHE_LOCK:
-        expired = [n for n, exp in _NONCE_CACHE.items() if exp < now]
-        for n in expired:
-            del _NONCE_CACHE[n]
+    with security_store.transaction(immediate=True) as conn:
+        conn.execute(text("DELETE FROM banking_nonces WHERE expires_at <= :now"), {"now": now})
 
 
 def banking_security_middleware(app=None, secret_key: Optional[str] = None):

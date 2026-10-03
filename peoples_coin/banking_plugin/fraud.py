@@ -1,126 +1,79 @@
-"""
-Fraud Detection Hooks, Velocity Checks, Anomaly Scoring, Rate Limits, and Account Freeze Triggers.
-"""
-
-import time
-from typing import Dict, List, Tuple
-import threading
+"""Database-backed atomic fraud velocity and freeze controls."""
 import math
+import time
+import uuid
 from numbers import Real
+from typing import Tuple
+from sqlalchemy import text
+from .store import security_store
+
 
 class FraudEngine:
-    """Manages transaction velocity checks, anomaly scoring, rate limits, and freeze triggers."""
-
-    def __init__(self, max_tx_per_minute: int = 10, anomaly_threshold: float = 85.0):
+    def __init__(self, max_tx_per_minute: int = 10, anomaly_threshold: float = 85.0, store=None):
         self.max_tx_per_minute = max_tx_per_minute
         self.anomaly_threshold = anomaly_threshold
-        # Account activity: account_id -> list of timestamps
-        self._user_velocity: Dict[str, List[float]] = {}
-        # Frozen accounts: account_id -> freeze reason string
-        self._frozen_accounts: Dict[str, str] = {}
-        self._lock = threading.Lock()
+        self.store = store or security_store
+
+    @staticmethod
+    def _validate_account(account_id):
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ValueError("account_id must be a non-empty string")
 
     def is_frozen(self, account_id: str) -> Tuple[bool, str]:
-        with self._lock:
-            if account_id in self._frozen_accounts:
-                return True, self._frozen_accounts[account_id]
-            return False, ""
+        self._validate_account(account_id)
+        with self.store.transaction() as conn:
+            reason = conn.execute(text("SELECT frozen_reason FROM banking_fraud_accounts WHERE account_id=:a"), {"a": account_id}).scalar()
+        return (reason is not None, reason or "")
 
     def freeze_account(self, account_id: str, reason: str):
-        with self._lock:
-            self._frozen_accounts[account_id] = reason
+        self._validate_account(account_id)
+        now = time.time()
+        with self.store.transaction(immediate=True) as conn:
+            conn.execute(text("INSERT INTO banking_fraud_accounts(account_id,frozen_reason,updated_at) VALUES (:a,:r,:n) ON CONFLICT(account_id) DO UPDATE SET frozen_reason=:r,updated_at=:n"), {"a": account_id, "r": reason, "n": now})
 
     def unfreeze_account(self, account_id: str):
-        with self._lock:
-            self._frozen_accounts.pop(account_id, None)
+        self._validate_account(account_id)
+        now = time.time()
+        with self.store.transaction(immediate=True) as conn:
+            conn.execute(text("INSERT INTO banking_fraud_accounts(account_id,frozen_reason,updated_at) VALUES (:a,NULL,:n) ON CONFLICT(account_id) DO UPDATE SET frozen_reason=NULL,updated_at=:n"), {"a": account_id, "n": now})
 
     def record_activity_and_check_velocity(self, account_id: str) -> bool:
-        """
-        Records action timestamp and checks per-minute rate limit / velocity.
-        Returns True if within velocity limit, False if limit exceeded.
-        """
+        self._validate_account(account_id)
         now = time.time()
-        one_minute_ago = now - 60.0
-
-        with self._lock:
-            if account_id in self._frozen_accounts:
+        with self.store.transaction(immediate=True) as conn:
+            conn.execute(text("INSERT INTO banking_fraud_accounts(account_id,frozen_reason,updated_at) VALUES (:a,NULL,:n) ON CONFLICT(account_id) DO NOTHING"), {"a": account_id, "n": now})
+            lock_clause = " FOR UPDATE" if conn.dialect.name == "postgresql" else ""
+            row = conn.execute(text("SELECT frozen_reason FROM banking_fraud_accounts WHERE account_id=:a" + lock_clause), {"a": account_id}).first()
+            if row[0] is not None:
                 return False
-
-            timestamps = self._user_velocity.get(account_id, [])
-            # Filter timestamps within last 60 seconds
-            valid_timestamps = [t for t in timestamps if t > one_minute_ago]
-            valid_timestamps.append(now)
-            self._user_velocity[account_id] = valid_timestamps
-
-            if len(valid_timestamps) > self.max_tx_per_minute:
-                # Trigger automatic freeze on velocity spike
-                self._frozen_accounts[account_id] = "Automatic freeze: Velocity limit exceeded"
+            conn.execute(text("DELETE FROM banking_fraud_events WHERE occurred_at <= :cutoff"), {"cutoff": now - 60})
+            count = conn.execute(text("SELECT COUNT(*) FROM banking_fraud_events WHERE account_id=:a AND occurred_at>:cutoff"), {"a": account_id, "cutoff": now - 60}).scalar_one()
+            if count >= self.max_tx_per_minute:
+                conn.execute(text("UPDATE banking_fraud_accounts SET frozen_reason=:r,updated_at=:n WHERE account_id=:a"), {"r": "Automatic freeze: Velocity limit exceeded", "n": now, "a": account_id})
                 return False
-
+            conn.execute(text("INSERT INTO banking_fraud_events(id,account_id,occurred_at) VALUES (:i,:a,:n)"), {"i": str(uuid.uuid4()), "a": account_id, "n": now})
             return True
 
     def velocity_count(self, account_id: str) -> int:
-        """Return current-window activity count without mutating fraud state."""
-        now = time.time()
-        with self._lock:
-            return sum(
-                timestamp > now - 60.0
-                for timestamp in self._user_velocity.get(account_id, [])
-            )
+        self._validate_account(account_id)
+        with self.store.transaction() as conn:
+            return conn.execute(text("SELECT COUNT(*) FROM banking_fraud_events WHERE account_id=:a AND occurred_at>:c"), {"a": account_id, "c": time.time()-60}).scalar_one()
 
     def calculate_anomaly_score(self, account_id: str, amount: float, ip_address: str, hour_of_day: int) -> dict:
-        """
-        Evaluates risk signals and generates a normalized risk/anomaly score (0 - 100).
-        """
-        if not isinstance(account_id, str) or not account_id.strip():
-            raise ValueError("account_id must be a non-empty string")
+        self._validate_account(account_id)
         if isinstance(amount, bool) or not isinstance(amount, Real) or not math.isfinite(float(amount)) or amount < 0:
             raise ValueError("amount must be a finite, non-negative number")
         if isinstance(hour_of_day, bool) or not isinstance(hour_of_day, int) or not 0 <= hour_of_day <= 23:
             raise ValueError("hour_of_day must be an integer from 0 through 23")
-
-        score = 0.0
-        reasons = []
-
-        # Signal 1: High Transaction Amount
-        if amount > 50000.0:
-            score += 40.0
-            reasons.append("High amount transaction exceeding $50,000 threshold")
-        elif amount > 10000.0:
-            score += 20.0
-            reasons.append("Elevated transaction amount")
-
-        # Signal 2: Unusual hours (e.g., 2 AM - 4 AM)
-        if 2 <= hour_of_day <= 4:
-            score += 15.0
-            reasons.append("Transaction during off-peak hours")
-
-        # Signal 3: Account velocity check
-        with self._lock:
-            velocity_count = len(self._user_velocity.get(account_id, []))
-            if velocity_count > 5:
-                score += 30.0
-                reasons.append("High frequency account activity detected")
-
-        frozen, freeze_reason = self.is_frozen(account_id)
-        if frozen:
-            score = 100.0
-            reasons.append(f"Account is currently frozen: {freeze_reason}")
-
-        recommendation = "ALLOW"
-        if score >= self.anomaly_threshold:
-            recommendation = "BLOCK_AND_FREEZE"
-            self.freeze_account(account_id, f"High anomaly risk score ({score:.1f})")
-        elif score >= 50.0:
-            recommendation = "REQUIRE_MFA"
-
-        return {
-            'account_id': account_id,
-            'score': min(score, 100.0),
-            'threshold': self.anomaly_threshold,
-            'recommendation': recommendation,
-            'reasons': reasons
-        }
-
+        score, reasons = 0.0, []
+        if amount > 50000: score, reasons = score + 40, reasons + ["High amount transaction exceeding $50,000 threshold"]
+        elif amount > 10000: score, reasons = score + 20, reasons + ["Elevated transaction amount"]
+        if 2 <= hour_of_day <= 4: score, reasons = score + 15, reasons + ["Transaction during off-peak hours"]
+        if self.velocity_count(account_id) > 5: score, reasons = score + 30, reasons + ["High frequency account activity detected"]
+        frozen, reason = self.is_frozen(account_id)
+        if frozen: score, reasons = 100, reasons + [f"Account is currently frozen: {reason}"]
+        recommendation = "BLOCK_AND_FREEZE" if score >= self.anomaly_threshold else "REQUIRE_MFA" if score >= 50 else "ALLOW"
+        if recommendation == "BLOCK_AND_FREEZE": self.freeze_account(account_id, f"High anomaly risk score ({score:.1f})")
+        return {'account_id': account_id, 'score': min(score, 100.0), 'threshold': self.anomaly_threshold, 'recommendation': recommendation, 'reasons': reasons}
 
 fraud_engine = FraudEngine()

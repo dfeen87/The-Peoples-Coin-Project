@@ -1,7 +1,7 @@
 # The People's Coin — Backend & System Controller
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version 5.0.0](https://img.shields.io/badge/version-5.0.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
+[![Version 6.0.0](https://img.shields.io/badge/version-6.0.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
 [![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
@@ -372,6 +372,33 @@ values are rejected. See [the BEDROCK v5.0.0 engineering report](docs/BEDROCK-5.
 for the invariant map, compatibility notes, validation scope, and remaining
 operational limitations.
 
+### Version 6.0.0 shared-state follow-up
+
+Version 6.0.0 replaces the BEDROCK plugin's process-local security state with
+shared SQL state and adds durable mint intents plus a transactional outbox.
+This is a major release because every production worker now requires the same
+PostgreSQL database and the new migration before it may serve banking traffic.
+Set `BANKING_STATE_DATABASE_URL` (normally equal to `DATABASE_URL`) and
+`BANKING_AUTO_CREATE=false`; development may use the durable single-host SQLite
+default. Run `alembic upgrade head` before rolling out application workers.
+Rollback drops security evidence and mint recovery state and therefore requires
+an explicit export/retention decision rather than an automatic downgrade.
+
+Nonce rows expire after the signature skew window and are opportunistically
+cleaned on reservation. Fraud events use a 60-second window. Expired sessions
+are denied (and may be periodically deleted after the applicable security
+retention period). Audit entries have no automatic deletion; operators must set
+and document retention, backups, access controls, and optional external
+notarization. Hash chaining detects alteration but does **not** make a database
+administrator incapable of rewriting evidence.
+
+Mint workers must provide a blockchain adapter whose `submit` accepts the
+stable `goodwill:<action UUID>` idempotency identity and whose `lookup` can
+reconcile it. If the external protocol cannot enforce or query that identity,
+ambiguous submissions stop in `AMBIGUOUS` for manual reconciliation; they are
+never automatically re-submitted. Queue publication and transaction submission
+are not confirmation.
+
 ---
 
 ## API Documentation
@@ -740,3 +767,7 @@ This architecture is fully open-source under the MIT License. If your organizati
 ## License
 
 This project is 100% open-source under the **MIT License**. You may use, modify, and distribute it in accordance with the terms in the `LICENSE` file.
+
+See [the v6 BEDROCK completion report](docs/BEDROCK-6.0.0.md) for transaction
+boundaries, retention, migration/rollback implications, validation results, and
+external limitations.
