@@ -28,7 +28,7 @@ requests==2.31.0
 # ======================
 # API Documentation
 # ======================
-flasgger==0.9.5
+flasgger==0.9.7.1
 
 # ======================
 # Security & Rate Limiting
