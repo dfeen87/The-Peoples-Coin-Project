@@ -10,8 +10,12 @@ services:
     environment:
       - GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json
       - FLASK_ENV=production
+      - DATABASE_URL=postgresql+psycopg2://peoples_coin:development-only@postgres:5432/peoples_coin
+      - BANKING_STATE_DATABASE_URL=postgresql+psycopg2://peoples_coin:development-only@postgres:5432/peoples_coin
+      - BANKING_AUTO_CREATE=false
     depends_on:
       - rabbitmq
+      - postgres
     volumes:
       - ./instance:/app/instance  # optional if you want to persist your db
 
@@ -23,6 +27,15 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: peoples_coin
+      POSTGRES_PASSWORD: development-only
+      POSTGRES_DB: peoples_coin
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
 volumes:
   rabbitmq_data:
-
+  postgres_data:

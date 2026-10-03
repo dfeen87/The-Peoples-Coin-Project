@@ -52,3 +52,5 @@ __all__ = [
     "ContentReport",
     "ControllerAction",
 ]
+from .mint_intent import MintIntent, MintOutbox
+__all__.extend(["MintIntent", "MintOutbox"])

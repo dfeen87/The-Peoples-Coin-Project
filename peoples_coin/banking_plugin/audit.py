@@ -1,108 +1,67 @@
-"""
-Append-only Audit Log Integrity with Merkle-Root Integrity Proofs
-and Tamper-Evident Snapshots.
-"""
+"""Durable append-only hash-chain audit evidence.
 
-import hashlib
-import time
-import json
-from typing import List, Dict, Any, Optional
-import threading
+The chain detects database changes; it is not external notarization and a database
+administrator able to rewrite both records and hashes remains in the trust model.
+"""
 import copy
+import hashlib
+import json
+import time
+from typing import Any, Dict, List, Optional
+from sqlalchemy import text
+from .store import security_store
 
 class MerkleTree:
-    """Computes Merkle root and cryptographic proofs for audit trail verification."""
-
     @staticmethod
-    def hash_entry(entry: Dict[str, Any]) -> str:
-        serialized = json.dumps(entry, sort_keys=True)
-        return hashlib.sha256(serialized.encode('utf-8')).hexdigest()
-
+    def hash_entry(entry):
+        return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     @classmethod
-    def compute_root(cls, hashes: List[str]) -> str:
-        if not hashes:
-            return hashlib.sha256(b"").hexdigest()
-        if len(hashes) == 1:
-            return hashes[0]
-
-        new_level = []
-        for i in range(0, len(hashes), 2):
-            left = hashes[i]
-            right = hashes[i + 1] if i + 1 < len(hashes) else left
-            combined = hashlib.sha256((left + right).encode('utf-8')).hexdigest()
-            new_level.append(combined)
-
-        return cls.compute_root(new_level)
-
+    def compute_root(cls, hashes):
+        if not hashes: return hashlib.sha256(b'').hexdigest()
+        level = list(hashes)
+        while len(level) > 1:
+            if len(level) % 2: level.append(level[-1])
+            level = [hashlib.sha256((level[i]+level[i+1]).encode()).hexdigest() for i in range(0,len(level),2)]
+        return level[0]
 
 class TamperEvidentAuditLog:
-    """Thread-safe, append-only encrypted tamper-evident audit log ledger."""
+    def __init__(self, store=None): self.store = store or security_store
+    def append(self, event_type: str, actor: str, context: Dict[str,Any], trace_id: Optional[str]=None):
+        owned = copy.deepcopy(context)
+        payload = json.dumps(owned, sort_keys=True, separators=(',', ':'))
+        now = time.time()
+        with self.store.transaction(immediate=True) as conn:
+            if conn.dialect.name == 'postgresql':
+                # Serialize this one global chain even when it is initially
+                # empty (there is then no row for SELECT FOR UPDATE to lock).
+                conn.execute(text("SELECT pg_advisory_xact_lock(1347374164)"))
+            last = conn.execute(text("SELECT sequence,entry_hash FROM banking_audit_entries ORDER BY sequence DESC LIMIT 1")).first()
+            previous = last.entry_hash if last else '0'*64
+            index = int(last.sequence) if last else 0
+            entry = {'index': index, 'timestamp': now, 'event_type': event_type, 'actor': actor, 'context': owned, 'trace_id': trace_id, 'previous_hash': previous}
+            digest = MerkleTree.hash_entry(entry)
+            sequence = conn.execute(text("INSERT INTO banking_audit_entries(timestamp,event_type,actor,context_json,trace_id,previous_hash,entry_hash) VALUES (:t,:e,:a,:c,:r,:p,:h) RETURNING sequence"), {'t':now,'e':event_type,'a':actor,'c':payload,'r':trace_id,'p':previous,'h':digest}).scalar_one()
+        entry['index'] = sequence - 1
+        # hash used provisional index equals previous sequence, which is sequence-1.
+        entry['hash'] = digest
+        return copy.deepcopy(entry)
+    def get_entries(self, limit=100):
+        if isinstance(limit,bool) or not isinstance(limit,int) or limit < 0: raise ValueError("limit must be a non-negative integer")
+        if not limit: return []
+        with self.store.transaction() as conn:
+            rows=conn.execute(text("SELECT * FROM banking_audit_entries ORDER BY sequence DESC LIMIT :n"), {'n':limit}).mappings().all()[::-1]
+        return [{'index':r['sequence']-1,'timestamp':r['timestamp'],'event_type':r['event_type'],'actor':r['actor'],'context':json.loads(r['context_json']),'trace_id':r['trace_id'],'previous_hash':r['previous_hash'],'hash':r['entry_hash']} for r in rows]
+    def verify_integrity(self):
+        with self.store.transaction() as conn: rows=conn.execute(text("SELECT * FROM banking_audit_entries ORDER BY sequence")).mappings().all()
+        previous='0'*64
+        for i,r in enumerate(rows):
+            entry={'index':i,'timestamp':r['timestamp'],'event_type':r['event_type'],'actor':r['actor'],'context':json.loads(r['context_json']),'trace_id':r['trace_id'],'previous_hash':r['previous_hash']}
+            if r['sequence'] != i+1 or r['previous_hash'] != previous or MerkleTree.hash_entry(entry) != r['entry_hash']: return False
+            previous=r['entry_hash']
+        return True
+    def get_merkle_root(self): return MerkleTree.compute_root([e['hash'] for e in self.get_entries(2**31-1)])
+    def get_snapshot(self):
+        entries=self.get_entries(2**31-1)
+        return {'total_records':len(entries),'merkle_root':MerkleTree.compute_root([e['hash'] for e in entries]),'timestamp':time.time(),'latest_entry_hash':entries[-1]['hash'] if entries else '0'*64}
 
-    def __init__(self):
-        self._entries: List[Dict[str, Any]] = []
-        self._hashes: List[str] = []
-        self._lock = threading.Lock()
-        self._last_snapshot_hash: str = ""
-
-    def append(self, event_type: str, actor: str, context: Dict[str, Any], trace_id: Optional[str] = None) -> Dict[str, Any]:
-        with self._lock:
-            prev_hash = self._hashes[-1] if self._hashes else "0" * 64
-            timestamp = time.time()
-            entry = {
-                'index': len(self._entries),
-                'timestamp': timestamp,
-                'event_type': event_type,
-                'actor': actor,
-                # The hash must cover state owned by the log, not a mutable
-                # object that a caller can change after append returns.
-                'context': copy.deepcopy(context),
-                'trace_id': trace_id,
-                'previous_hash': prev_hash
-            }
-            entry_hash = MerkleTree.hash_entry(entry)
-            entry['hash'] = entry_hash
-
-            self._entries.append(entry)
-            self._hashes.append(entry_hash)
-            return copy.deepcopy(entry)
-
-    def get_merkle_root(self) -> str:
-        with self._lock:
-            return MerkleTree.compute_root(self._hashes)
-
-    def verify_integrity(self) -> bool:
-        """Verifies hash link chaining and Merkle tree consistency across all entries."""
-        with self._lock:
-            for i in range(len(self._entries)):
-                entry = self._entries[i]
-                if i >= len(self._hashes) or self._hashes[i] != entry.get('hash'):
-                    return False
-                expected_prev = self._entries[i - 1]['hash'] if i > 0 else "0" * 64
-                if entry['previous_hash'] != expected_prev:
-                    return False
-
-                entry_copy = {k: v for k, v in entry.items() if k != 'hash'}
-                if MerkleTree.hash_entry(entry_copy) != entry['hash']:
-                    return False
-            return len(self._entries) == len(self._hashes)
-
-    def get_snapshot(self) -> Dict[str, Any]:
-        """Creates a tamper-evident snapshot certificate of current audit state."""
-        with self._lock:
-            root = MerkleTree.compute_root(self._hashes)
-            snapshot = {
-                'total_records': len(self._entries),
-                'merkle_root': root,
-                'timestamp': time.time(),
-                'latest_entry_hash': self._hashes[-1] if self._hashes else "0" * 64
-            }
-            return snapshot
-
-    def get_entries(self, limit: int = 100) -> List[Dict[str, Any]]:
-        with self._lock:
-            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
-                raise ValueError("limit must be a non-negative integer")
-            return copy.deepcopy(self._entries[-limit:] if limit else [])
-
-
-audit_log = TamperEvidentAuditLog()
+audit_log=TamperEvidentAuditLog()

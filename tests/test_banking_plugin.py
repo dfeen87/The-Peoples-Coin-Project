@@ -258,12 +258,16 @@ def test_audit_log_defensively_copies_context_and_entries():
     assert log.get_entries()[0]['context']['nested']['approved'] is True
 
 
-def test_audit_integrity_detects_hash_index_corruption():
+def test_audit_integrity_detects_hash_index_corruption(tmp_path):
     from peoples_coin.banking_plugin.audit import TamperEvidentAuditLog
+    from peoples_coin.banking_plugin.store import SecurityStore
+    from sqlalchemy import text
 
-    log = TamperEvidentAuditLog()
-    log.append('DECISION', 'actor', {})
-    log._hashes[0] = '0' * 64
+    log = TamperEvidentAuditLog(SecurityStore(f"sqlite:///{tmp_path / 'audit.db'}"))
+    entry = log.append('DECISION', 'actor', {})
+    with log.store.transaction(immediate=True) as conn:
+        conn.execute(text("UPDATE banking_audit_entries SET entry_hash=:bad WHERE entry_hash=:old"),
+                     {'bad': '0' * 64, 'old': entry['hash']})
     assert log.verify_integrity() is False
 
 
@@ -337,10 +341,11 @@ def test_fail_closed_rbac_mismatch_and_mfa(client):
 
 
 def test_fail_closed_malformed_audit_proof(client):
-    # Tamper with an audit entry in memory
-    audit_log.append("PRE_TAMPER_EVENT", "actor1", {})
-    if audit_log._entries:
-        audit_log._entries[0]['hash'] = 'corrupted_hash_value_12345'
+    from sqlalchemy import text
+    entry = audit_log.append("PRE_TAMPER_EVENT", "actor1", {})
+    with audit_log.store.transaction(immediate=True) as conn:
+        conn.execute(text("UPDATE banking_audit_entries SET previous_hash=:bad WHERE entry_hash=:h"),
+                     {'bad': 'corrupted_hash_value_12345', 'h': entry['hash']})
 
     res = client.get('/banking/audit-proof')
     assert res.status_code == 422

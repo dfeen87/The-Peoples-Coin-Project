@@ -2,7 +2,7 @@
 
 from enum import Enum
 
-__version__ = "5.0.0"
+__version__ = "6.0.0"
 
 class GoodwillStatus(Enum):
     PENDING_VERIFICATION = "PENDING_VERIFICATION"

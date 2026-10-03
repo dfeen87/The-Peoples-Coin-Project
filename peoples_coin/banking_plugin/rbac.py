@@ -8,10 +8,10 @@ from functools import wraps
 import time
 import hmac
 import hashlib
-import copy
-import threading
-from typing import Dict, List, Optional
+from typing import Optional
 from flask import request, jsonify, g
+from sqlalchemy import text
+from .store import security_store
 
 ROLE_HIERARCHY = {
     'admin': {'admin', 'auditor', 'teller', 'customer'},
@@ -20,15 +20,18 @@ ROLE_HIERARCHY = {
     'customer': {'customer'}
 }
 
-_EPHEMERAL_SESSIONS: Dict[str, dict] = {}
-_SESSIONS_LOCK = threading.RLock()
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 class RBACManager:
     """Manages role-based access control and hardware-bound ephemeral MFA session tokens."""
 
-    @staticmethod
+    def __init__(self, store=None):
+        self.store = store or security_store
+
     def register_session(
+        self,
         token: str,
         role: str,
         user_id: str,
@@ -53,25 +56,26 @@ class RBACManager:
             'expires_at': expires_at,
             'permissions': sorted(list(ROLE_HIERARCHY[role]))
         }
-        with _SESSIONS_LOCK:
-            _EPHEMERAL_SESSIONS[token] = session
-        return copy.deepcopy(session)
+        now = time.time()
+        with self.store.transaction(immediate=True) as conn:
+            conn.execute(text("DELETE FROM banking_sessions WHERE token_hash=:h"), {"h": _token_hash(token)})
+            conn.execute(text("INSERT INTO banking_sessions(token_hash,role,user_id,hardware_device_id,expires_at,revoked_at,created_at) VALUES (:h,:r,:u,:d,:e,NULL,:c)"),
+                         {"h": _token_hash(token), "r": role, "u": user_id, "d": hardware_device_id, "e": expires_at, "c": now})
+        return session.copy()
 
-    @staticmethod
-    def get_session(token: str) -> Optional[dict]:
-        with _SESSIONS_LOCK:
-            session = _EPHEMERAL_SESSIONS.get(token)
-            if not session:
-                return None
-            if time.time() > session['expires_at']:
-                del _EPHEMERAL_SESSIONS[token]
-                return None
-            return copy.deepcopy(session)
+    def get_session(self, token: str) -> Optional[dict]:
+        with self.store.transaction() as conn:
+            row = conn.execute(text("SELECT role,user_id,hardware_device_id,expires_at,revoked_at FROM banking_sessions WHERE token_hash=:h"), {"h": _token_hash(token)}).mappings().first()
+        if not row or row['revoked_at'] is not None or time.time() >= row['expires_at']:
+            return None
+        return {'token': token, 'role': row['role'], 'user_id': row['user_id'],
+                'hardware_device_id': row['hardware_device_id'], 'expires_at': row['expires_at'],
+                'permissions': sorted(ROLE_HIERARCHY[row['role']])}
 
-    @staticmethod
-    def revoke_session(token: str):
-        with _SESSIONS_LOCK:
-            _EPHEMERAL_SESSIONS.pop(token, None)
+    def revoke_session(self, token: str):
+        with self.store.transaction(immediate=True) as conn:
+            conn.execute(text("UPDATE banking_sessions SET revoked_at=:now WHERE token_hash=:h AND revoked_at IS NULL"),
+                         {"now": time.time(), "h": _token_hash(token)})
 
     @staticmethod
     def verify_hardware_binding(session: dict, hardware_signature: Optional[str], payload: str) -> bool:

@@ -8,6 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: peoples_coin
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: peoples_coin_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U peoples_coin -d peoples_coin_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      BANKING_STATE_DATABASE_URL: postgresql+psycopg2://peoples_coin:test-only@localhost:5432/peoples_coin_test
+      BANKING_AUTO_CREATE: 'true'
     permissions:
       contents: read
     steps:

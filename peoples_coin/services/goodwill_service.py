@@ -32,7 +32,7 @@ class GoodwillService:
 
     def submit_and_queue_goodwill_action(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Validates goodwill action data, persists it, and queues it for blockchain minting.
+        Validates and persists a goodwill action for verification.
 
         Args:
             data: Incoming goodwill action data dict.
@@ -80,19 +80,10 @@ class GoodwillService:
                 session.add(goodwill_action)
                 session.flush()  # Assign ID
 
-                logger.info(f"GoodwillAction {goodwill_action.id} persisted. Queueing for blockchain minting.")
-
-                if self.message_queue_client:
-                    # Placeholder for queueing logic — implement your message broker here
-                    # e.g.,
-                    # topic_path = self.message_queue_client.publisher.topic_path(
-                    #     self.app.config['GCP_PROJECT_ID'],
-                    #     self.app.config['MINTING_TOPIC_ID']
-                    # )
-                    # self.message_queue_client.publisher.publish(topic_path, str(goodwill_action.id).encode('utf-8'))
-                    logger.info(f"Queued GoodwillAction ID {goodwill_action.id} for blockchain processing.")
-                else:
-                    logger.warning("Message queue client not initialized; skipping queuing.")
+                # Minting before verification is unsafe.  Once VERIFIED, the
+                # circulatory boundary creates MintIntent + MintOutbox in one
+                # transaction; a dispatcher publishes only committed rows.
+                logger.info("GoodwillAction %s persisted for verification.", goodwill_action.id)
 
                 return {"action_id": str(goodwill_action.id), "status": "accepted"}
 
