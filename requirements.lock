@@ -67,6 +67,7 @@ ordered-set==4.1.0
 packaging==25.0
 pika==1.3.2
 prompt_toolkit==3.0.51
+psutil==5.9.5
 proto-plus==1.26.1
 protobuf==4.25.8
 psycopg2-binary==2.9.9
