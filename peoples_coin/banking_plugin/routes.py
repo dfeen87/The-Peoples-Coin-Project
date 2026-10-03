@@ -15,6 +15,7 @@ from .fraud import fraud_engine
 from .rbac import rbac_manager, require_role
 from .tracing import regulated_tracer
 from .middleware import RequestSigner
+import math
 
 banking_plugin_blueprint = Blueprint('banking_plugin', __name__, url_prefix='/banking')
 
@@ -85,14 +86,38 @@ def calculate_fraud_score():
     """Calculate anomaly score & velocity check with fail-closed rejection on threshold breach."""
     data = request.get_json(silent=True) or {}
     account_id = data.get('account_id')
-    amount = float(data.get('amount', 0.0))
+    raw_amount = data.get('amount', 0.0)
+    raw_hour = data.get('hour_of_day', 12)
+    if isinstance(raw_amount, bool) or isinstance(raw_hour, bool):
+        return jsonify({
+            'error': 'Strict fail-closed: amount and hour_of_day must be valid numbers',
+            'code': 'INVALID_FRAUD_REQUEST'
+        }), 400
+    try:
+        amount = float(raw_amount)
+        hour_of_day = int(raw_hour)
+    except (TypeError, ValueError, OverflowError):
+        return jsonify({
+            'error': 'Strict fail-closed: amount and hour_of_day must be valid numbers',
+            'code': 'INVALID_FRAUD_REQUEST'
+        }), 400
     ip_address = request.remote_addr or data.get('ip_address', '127.0.0.1')
-    hour_of_day = int(data.get('hour_of_day', 12))
 
-    if not account_id:
+    if not isinstance(account_id, str) or not account_id.strip():
         return jsonify({
             'error': 'Strict fail-closed: account_id is required',
             'code': 'MISSING_ACCOUNT_ID'
+        }), 400
+
+    if (
+        not math.isfinite(amount)
+        or amount < 0
+        or isinstance(raw_hour, float) and not raw_hour.is_integer()
+        or not 0 <= hour_of_day <= 23
+    ):
+        return jsonify({
+            'error': 'Strict fail-closed: amount must be finite and non-negative, and hour_of_day must be 0 through 23',
+            'code': 'INVALID_FRAUD_REQUEST'
         }), 400
 
     velocity_ok = fraud_engine.record_activity_and_check_velocity(account_id)
@@ -128,20 +153,24 @@ def calculate_fraud_score():
     }), 200
 
 
-@banking_plugin_blueprint.route('/rbac/roles', methods=['GET', 'POST'])
-def manage_roles():
-    """Endpoint to inspect or request ephemeral RBAC sessions."""
-    if request.method == 'GET':
-        return jsonify({
-            'available_roles': ['customer', 'teller', 'auditor', 'admin'],
-            'hierarchy': {
-                'admin': ['admin', 'auditor', 'teller', 'customer'],
-                'auditor': ['auditor', 'customer'],
-                'teller': ['teller', 'customer'],
-                'customer': ['customer']
-            }
-        }), 200
+@banking_plugin_blueprint.route('/rbac/roles', methods=['GET'])
+def list_roles():
+    """Inspect the available RBAC roles without changing authorization state."""
+    return jsonify({
+        'available_roles': ['customer', 'teller', 'auditor', 'admin'],
+        'hierarchy': {
+            'admin': ['admin', 'auditor', 'teller', 'customer'],
+            'auditor': ['auditor', 'customer'],
+            'teller': ['teller', 'customer'],
+            'customer': ['customer']
+        }
+    }), 200
 
+
+@banking_plugin_blueprint.route('/rbac/roles', methods=['POST'])
+@require_role('admin')
+def manage_roles():
+    """Provision an ephemeral session from an already authorized admin session."""
     data = request.get_json(silent=True) or {}
     token = data.get('token')
     role = data.get('role')

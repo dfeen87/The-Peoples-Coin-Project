@@ -8,6 +8,7 @@ import time
 import json
 from typing import List, Dict, Any, Optional
 import threading
+import copy
 
 class MerkleTree:
     """Computes Merkle root and cryptographic proofs for audit trail verification."""
@@ -52,7 +53,9 @@ class TamperEvidentAuditLog:
                 'timestamp': timestamp,
                 'event_type': event_type,
                 'actor': actor,
-                'context': context,
+                # The hash must cover state owned by the log, not a mutable
+                # object that a caller can change after append returns.
+                'context': copy.deepcopy(context),
                 'trace_id': trace_id,
                 'previous_hash': prev_hash
             }
@@ -61,7 +64,7 @@ class TamperEvidentAuditLog:
 
             self._entries.append(entry)
             self._hashes.append(entry_hash)
-            return entry
+            return copy.deepcopy(entry)
 
     def get_merkle_root(self) -> str:
         with self._lock:
@@ -72,6 +75,8 @@ class TamperEvidentAuditLog:
         with self._lock:
             for i in range(len(self._entries)):
                 entry = self._entries[i]
+                if i >= len(self._hashes) or self._hashes[i] != entry.get('hash'):
+                    return False
                 expected_prev = self._entries[i - 1]['hash'] if i > 0 else "0" * 64
                 if entry['previous_hash'] != expected_prev:
                     return False
@@ -79,7 +84,7 @@ class TamperEvidentAuditLog:
                 entry_copy = {k: v for k, v in entry.items() if k != 'hash'}
                 if MerkleTree.hash_entry(entry_copy) != entry['hash']:
                     return False
-            return True
+            return len(self._entries) == len(self._hashes)
 
     def get_snapshot(self) -> Dict[str, Any]:
         """Creates a tamper-evident snapshot certificate of current audit state."""
@@ -95,7 +100,9 @@ class TamperEvidentAuditLog:
 
     def get_entries(self, limit: int = 100) -> List[Dict[str, Any]]:
         with self._lock:
-            return self._entries[-limit:]
+            if not isinstance(limit, int) or isinstance(limit, bool) or limit < 0:
+                raise ValueError("limit must be a non-negative integer")
+            return copy.deepcopy(self._entries[-limit:] if limit else [])
 
 
 audit_log = TamperEvidentAuditLog()

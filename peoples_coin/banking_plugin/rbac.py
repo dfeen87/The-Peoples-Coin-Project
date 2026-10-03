@@ -8,6 +8,8 @@ from functools import wraps
 import time
 import hmac
 import hashlib
+import copy
+import threading
 from typing import Dict, List, Optional
 from flask import request, jsonify, g
 
@@ -19,6 +21,7 @@ ROLE_HIERARCHY = {
 }
 
 _EPHEMERAL_SESSIONS: Dict[str, dict] = {}
+_SESSIONS_LOCK = threading.RLock()
 
 
 class RBACManager:
@@ -32,8 +35,14 @@ class RBACManager:
         hardware_device_id: Optional[str] = None,
         ttl_seconds: int = 3600
     ) -> dict:
+        if not isinstance(token, str) or not token.strip():
+            raise ValueError("Session token must be a non-empty string")
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("User ID must be a non-empty string")
         if role not in ROLE_HIERARCHY:
             raise ValueError(f"Invalid role: {role}")
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds <= 0:
+            raise ValueError("Session TTL must be a positive integer")
 
         expires_at = time.time() + ttl_seconds
         session = {
@@ -44,23 +53,25 @@ class RBACManager:
             'expires_at': expires_at,
             'permissions': sorted(list(ROLE_HIERARCHY[role]))
         }
-        _EPHEMERAL_SESSIONS[token] = session
-        return session
+        with _SESSIONS_LOCK:
+            _EPHEMERAL_SESSIONS[token] = session
+        return copy.deepcopy(session)
 
     @staticmethod
     def get_session(token: str) -> Optional[dict]:
-        session = _EPHEMERAL_SESSIONS.get(token)
-        if not session:
-            return None
-        if time.time() > session['expires_at']:
-            del _EPHEMERAL_SESSIONS[token]
-            return None
-        return session
+        with _SESSIONS_LOCK:
+            session = _EPHEMERAL_SESSIONS.get(token)
+            if not session:
+                return None
+            if time.time() > session['expires_at']:
+                del _EPHEMERAL_SESSIONS[token]
+                return None
+            return copy.deepcopy(session)
 
     @staticmethod
     def revoke_session(token: str):
-        if token in _EPHEMERAL_SESSIONS:
-            del _EPHEMERAL_SESSIONS[token]
+        with _SESSIONS_LOCK:
+            _EPHEMERAL_SESSIONS.pop(token, None)
 
     @staticmethod
     def verify_hardware_binding(session: dict, hardware_signature: Optional[str], payload: str) -> bool:

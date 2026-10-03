@@ -1,7 +1,7 @@
 # The People's Coin — Backend & System Controller
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Version 4.1.0](https://img.shields.io/badge/version-4.1.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
+[![Version 5.0.0](https://img.shields.io/badge/version-5.0.0-blue.svg)](https://github.com/dfeen87/the-peoples-coin-project)
 [![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![Flask](https://img.shields.io/badge/Flask-2.2.5-green.svg)](https://flask.palletsprojects.com/)
 [![PostgreSQL 15](https://img.shields.io/badge/PostgreSQL-15-blue.svg)](https://www.postgresql.org/)
@@ -355,6 +355,22 @@ Version 4.1.0 represents a major architectural milestone introducing:
 - Cryptographic Merkle-root audit proof engine.
 - Dual HMAC payload signing and replay attack mitigation.
 - Regulated FINRA/FDIC event trace lineage.
+
+### Version 5.0.0 BEDROCK Release
+
+Version 5.0.0 establishes a hardened engineering baseline while preserving the
+Flask blueprint, service, model, and observability architecture. Banking trust
+boundaries now reject non-finite or out-of-domain fraud inputs before state is
+mutated, privileged RBAC sessions can only be provisioned by an existing admin,
+nonce replay checks are atomic within a process, and audit-log values are
+defensively isolated from caller mutation. CI now runs the complete Python test
+suite before deployment can proceed.
+
+These are intentionally incompatible behavioral-contract corrections: requests
+that depended on anonymous privileged-session issuance or malformed numerical
+values are rejected. See [the BEDROCK v5.0.0 engineering report](docs/BEDROCK-5.0.0.md)
+for the invariant map, compatibility notes, validation scope, and remaining
+operational limitations.
 
 ---
 
@@ -724,4 +740,3 @@ This architecture is fully open-source under the MIT License. If your organizati
 ## License
 
 This project is 100% open-source under the **MIT License**. You may use, modify, and distribute it in accordance with the terms in the `LICENSE` file.
-

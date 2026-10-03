@@ -175,12 +175,96 @@ def test_endpoint_rbac_roles(client):
     data = res.get_json()
     assert 'admin' in data['available_roles']
 
-    reg_res = client.post('/banking/rbac/roles', json={
+    rbac_manager.register_session('provisioner-token', 'admin', 'provisioner')
+    reg_res = client.post('/banking/rbac/roles', headers={
+        'Authorization': 'Bearer provisioner-token'
+    }, json={
         'token': 'bearer-token-abc',
         'role': 'admin',
         'user_id': 'admin_001'
     })
     assert reg_res.status_code == 201
+
+
+def test_rbac_session_issuance_requires_admin(client):
+    """An anonymous or lower-privileged caller cannot mint an admin session."""
+    payload = {'token': 'forged-admin', 'role': 'admin', 'user_id': 'attacker'}
+    assert client.post('/banking/rbac/roles', json=payload).status_code == 401
+
+    rbac_manager.register_session('customer-token', 'customer', 'customer')
+    response = client.post(
+        '/banking/rbac/roles',
+        headers={'Authorization': 'Bearer customer-token'},
+        json=payload,
+    )
+    assert response.status_code == 403
+    assert rbac_manager.get_session('forged-admin') is None
+
+
+@pytest.mark.parametrize('amount', ['NaN', 'Infinity', '-1', True])
+def test_fraud_score_rejects_invalid_amount_without_recording_activity(client, amount):
+    account_id = f'invalid-amount-{amount}'
+    response = client.post('/banking/fraud-score', json={
+        'account_id': account_id,
+        'amount': amount,
+    })
+    assert response.status_code == 400
+    assert response.get_json()['code'] == 'INVALID_FRAUD_REQUEST'
+    assert fraud_engine.velocity_count(account_id) == 0
+
+
+@pytest.mark.parametrize('hour', [-1, 24, 1.5, True, 'not-an-hour'])
+def test_fraud_score_rejects_invalid_hour_without_recording_activity(client, hour):
+    account_id = f'invalid-hour-{hour}'
+    response = client.post('/banking/fraud-score', json={
+        'account_id': account_id,
+        'amount': 1,
+        'hour_of_day': hour,
+    })
+    assert response.status_code == 400
+    assert response.get_json()['code'] == 'INVALID_FRAUD_REQUEST'
+    assert fraud_engine.velocity_count(account_id) == 0
+
+
+def test_signature_rejects_non_finite_timestamp(client):
+    timestamp = 'nan'
+    nonce = 'non-finite-timestamp'
+    payload = {'action': 'TRANSFER'}
+    signature = RequestSigner.calculate_hmac(
+        'test-secret-key', timestamp, nonce, payload
+    )
+    response = client.post('/banking/verify-signature', json={
+        'signature': signature,
+        'timestamp': timestamp,
+        'nonce': nonce,
+        'payload': payload,
+    })
+    assert response.status_code == 401
+
+
+def test_audit_log_defensively_copies_context_and_entries():
+    from peoples_coin.banking_plugin.audit import TamperEvidentAuditLog
+
+    log = TamperEvidentAuditLog()
+    context = {'nested': {'approved': True}}
+    returned = log.append('DECISION', 'actor', context)
+    context['nested']['approved'] = False
+    returned['context']['nested']['approved'] = False
+
+    entries = log.get_entries()
+    entries[0]['context']['nested']['approved'] = False
+
+    assert log.verify_integrity() is True
+    assert log.get_entries()[0]['context']['nested']['approved'] is True
+
+
+def test_audit_integrity_detects_hash_index_corruption():
+    from peoples_coin.banking_plugin.audit import TamperEvidentAuditLog
+
+    log = TamperEvidentAuditLog()
+    log.append('DECISION', 'actor', {})
+    log._hashes[0] = '0' * 64
+    assert log.verify_integrity() is False
 
 
 # --- Fail-Closed Rejection Tests ---

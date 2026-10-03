@@ -5,6 +5,8 @@ Fraud Detection Hooks, Velocity Checks, Anomaly Scoring, Rate Limits, and Accoun
 import time
 from typing import Dict, List, Tuple
 import threading
+import math
+from numbers import Real
 
 class FraudEngine:
     """Manages transaction velocity checks, anomaly scoring, rate limits, and freeze triggers."""
@@ -57,10 +59,26 @@ class FraudEngine:
 
             return True
 
+    def velocity_count(self, account_id: str) -> int:
+        """Return current-window activity count without mutating fraud state."""
+        now = time.time()
+        with self._lock:
+            return sum(
+                timestamp > now - 60.0
+                for timestamp in self._user_velocity.get(account_id, [])
+            )
+
     def calculate_anomaly_score(self, account_id: str, amount: float, ip_address: str, hour_of_day: int) -> dict:
         """
         Evaluates risk signals and generates a normalized risk/anomaly score (0 - 100).
         """
+        if not isinstance(account_id, str) or not account_id.strip():
+            raise ValueError("account_id must be a non-empty string")
+        if isinstance(amount, bool) or not isinstance(amount, Real) or not math.isfinite(float(amount)) or amount < 0:
+            raise ValueError("amount must be a finite, non-negative number")
+        if isinstance(hour_of_day, bool) or not isinstance(hour_of_day, int) or not 0 <= hour_of_day <= 23:
+            raise ValueError("hour_of_day must be an integer from 0 through 23")
+
         score = 0.0
         reasons = []
 

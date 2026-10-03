@@ -8,11 +8,14 @@ import os
 import hmac
 import hashlib
 import json
+import math
+import threading
 import time
 from typing import Dict, Any, Optional
 from flask import request, jsonify, g
 
 _NONCE_CACHE: Dict[str, float] = {}
+_NONCE_CACHE_LOCK = threading.RLock()
 
 class RequestSigner:
     """Handles dual-signature payload validation and canonical JSON normalization."""
@@ -46,30 +49,34 @@ class RequestSigner:
 
         try:
             ts_float = float(timestamp)
-        except ValueError:
+        except (TypeError, ValueError):
             return False
 
         now = time.time()
-        if abs(now - ts_float) > max_skew_seconds:
+        if not math.isfinite(ts_float) or abs(now - ts_float) > max_skew_seconds:
             return False
-
-        clean_expired_nonces()
-        if nonce in _NONCE_CACHE:
-            return False  # Replay attack detected!
 
         expected_sig = cls.calculate_hmac(secret_key, timestamp, nonce, body)
         if not hmac.compare_digest(expected_sig, client_signature):
             return False
 
-        _NONCE_CACHE[nonce] = now + max_skew_seconds
-        return True
+        # Checking and reserving a nonce must be one atomic operation. Without
+        # the lock, simultaneous requests could both pass the replay check.
+        with _NONCE_CACHE_LOCK:
+            clean_expired_nonces(now=now)
+            if nonce in _NONCE_CACHE:
+                return False
+            _NONCE_CACHE[nonce] = now + max_skew_seconds
+            return True
 
 
-def clean_expired_nonces():
-    now = time.time()
-    expired = [n for n, exp in _NONCE_CACHE.items() if exp < now]
-    for n in expired:
-        del _NONCE_CACHE[n]
+def clean_expired_nonces(now: Optional[float] = None):
+    """Remove expired nonces without racing verification requests."""
+    now = time.time() if now is None else now
+    with _NONCE_CACHE_LOCK:
+        expired = [n for n, exp in _NONCE_CACHE.items() if exp < now]
+        for n in expired:
+            del _NONCE_CACHE[n]
 
 
 def banking_security_middleware(app=None, secret_key: Optional[str] = None):
