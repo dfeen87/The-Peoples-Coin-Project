@@ -242,10 +242,13 @@ def test_signature_rejects_non_finite_timestamp(client):
     assert response.status_code == 401
 
 
-def test_audit_log_defensively_copies_context_and_entries():
+def test_audit_log_defensively_copies_context_and_entries(tmp_path):
     from peoples_coin.banking_plugin.audit import TamperEvidentAuditLog
+    from peoples_coin.banking_plugin.store import SecurityStore
 
-    log = TamperEvidentAuditLog()
+    log = TamperEvidentAuditLog(
+        SecurityStore(f"sqlite:///{tmp_path / 'defensive-copy-audit.db'}")
+    )
     context = {'nested': {'approved': True}}
     returned = log.append('DECISION', 'actor', context)
     context['nested']['approved'] = False
